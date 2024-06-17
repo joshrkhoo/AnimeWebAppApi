@@ -1,8 +1,10 @@
 from flask import Flask, request, jsonify
 import requests
+from flask_cors import CORS
 
 # Initialize the Flask app
 app = Flask(__name__)
+CORS(app)
 
 # AniList GraphQL API endpoint
 url = 'https://graphql.anilist.co'
@@ -39,17 +41,28 @@ query ($search: String) {
 '''
 
 # Flask route to handle the POST request
-@app.route('/api', methods=['GET'])
+@app.route('/api', methods=['POST'])
 def get_anime():
+    """
+    This function handles the POST request to the '/api' route.
+
+    It gets the anime title from the request JSON data and uses it to make a query to the AniList GraphQL API.
+
+    The response from the API is returned as a JSON response.
+
+    If the request fails, an error message is returned.
+
+    NOTE: direct browser access results in a get request, which will return an error message as the route only accepts POST requests. 
+        - use postman to check the api
+    
+    
+    
+    """
 
     data = request.get_json()
+    print(data)
 
-    # Get the search query from the request data
     anime_name = data.get('title')
-
-    # Check if the anime_name is provided
-    if not anime_name:
-        return jsonify({"error": "Anime Doesnt Exist"}), 400
 
 
     # Define our query variables and values that will be used in the query request
