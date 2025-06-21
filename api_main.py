@@ -102,6 +102,9 @@ def save_schedule():
 @app.route('/loadSchedule', methods=['GET'])
 def load_schedule():
     schedule_data = load_schedule_data(db)
+    # Ensure a valid schedule object is always returned
+    if not schedule_data or not isinstance(schedule_data, dict):
+        schedule_data = {day: [] for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']}
     return jsonify(schedule_data)
 
 # Endpoint to remove an anime
