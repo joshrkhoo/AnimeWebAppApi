@@ -8,7 +8,7 @@ from api_db import save_schedule_data, load_schedule_data, remove_anime
 app = Flask(__name__)
 
 # CORS must be after app is created
-CORS(app, resources={r"/*": {"origins": "*"}})  # or use "http://localhost:3000" for more security
+CORS(app)  # or use "http://localhost:3000" for more security
 
 # Regular PyMongo setup
 mongo_client = MongoClient("mongodb+srv://giganotosaurus:Graynerpass01@animeschedulercluster.7d9oxyn.mongodb.net/anime_db?retryWrites=true&w=majority&appName=AnimeSchedulerCluster")
