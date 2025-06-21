@@ -116,7 +116,36 @@ def remove_anime_route(anime_id):
     else:
         return jsonify({"message": "Anime not found"}), 404
 
-
+@app.route('/fetchAnimeById', methods=['POST'])
+def fetch_anime_by_id():
+    data = request.get_json()
+    anime_id = data.get('id')
+    if not anime_id:
+        return jsonify({'error': 'No anime id provided'}), 400
+    query = '''
+    query ($id: Int) {
+      Media(id: $id, type: ANIME) {
+        id
+        title { romaji english native }
+        coverImage { extraLarge large medium }
+        airingSchedule {
+          edges {
+            node {
+              airingAt
+              timeUntilAiring
+              episode
+            }
+          }
+        }
+      }
+    }
+    '''
+    variables = {'id': anime_id}
+    response = requests.post('https://graphql.anilist.co', json={'query': query, 'variables': variables})
+    if response.status_code == 200:
+        return jsonify(response.json()['data']['Media'])
+    else:
+        return jsonify({'error': 'Failed to fetch from AniList'}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
