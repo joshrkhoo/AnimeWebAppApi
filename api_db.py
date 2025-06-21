@@ -17,16 +17,10 @@ def save_schedule_data(data, db):
                 print(f"Warning: Expected a dict for anime, got {type(anime)}. Skipping. Value: {anime}")
                 continue
             try:
-                # Accept both camelCase and snake_case for airing schedule
-                airing_schedule = anime.get('airingSchedule') or anime.get('airing_schedule')
+                # Save the full anime object, including all fields
                 result = db.animes.update_one(
-                    {"id": anime.get('id')},
-                    {
-                        "$set": {
-                            "title": anime.get('title'),
-                            "airing_schedule": airing_schedule
-                        }
-                    },
+                    {"id": anime.get('id'), "episode": anime.get('episode'), "airing_time": anime.get('airing_time')},
+                    {"$set": anime},
                     upsert=True
                 )
                 print(f"Saved anime {anime.get('id')} - matched: {result.matched_count}, modified: {result.modified_count}, upserted: {result.upserted_id}")
@@ -45,15 +39,22 @@ def load_schedule_data(db):
     try: 
         animes = db.animes.find()
         for anime in animes:
-            for edge in anime['airing_schedule']['edges']:
-                airing_time = edge['node']['airingAt']
+            # Remove the MongoDB _id field (not JSON serializable)
+            if '_id' in anime:
+                del anime['_id']
+            airing_time = anime.get('airing_time')
+            if airing_time is not None:
+                if isinstance(airing_time, str):
+                    try:
+                        airing_time = int(airing_time)
+                    except Exception:
+                        try:
+                            airing_time = int(datetime.fromisoformat(airing_time).timestamp())
+                        except Exception:
+                            print(f"Could not parse airing_time: {airing_time}")
+                            continue
                 airing_day = datetime.fromtimestamp(airing_time).strftime('%A')
-                schedule_data[airing_day].append({
-                    'id': anime['id'],
-                    'title': anime['title'],
-                    'airing_time': airing_time,
-                    'episode': edge['node']['episode']
-                })
+                schedule_data[airing_day].append(anime)
 
     except Exception as e:
         print(f"Error loading schedule data: {e}")
