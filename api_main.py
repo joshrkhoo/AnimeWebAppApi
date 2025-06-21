@@ -1,10 +1,20 @@
 from flask import Flask, request, jsonify
-import requests
 from flask_cors import CORS
+import requests
+from pymongo import MongoClient
+from api_db import save_schedule_data, load_schedule_data, remove_anime
 
 # Initialize the Flask app
 app = Flask(__name__)
-CORS(app)
+
+# CORS must be after app is created
+CORS(app, resources={r"/*": {"origins": "*"}})  # or use "http://localhost:3000" for more security
+
+# Regular PyMongo setup
+mongo_client = MongoClient("mongodb+srv://giganotosaurus:Graynerpass01@animeschedulercluster.7d9oxyn.mongodb.net/anime_db?retryWrites=true&w=majority&appName=AnimeSchedulerCluster")
+db = mongo_client.get_default_database()
+
+# Pass db to your api_db functions as needed, or set it as a global in api_db
 
 # AniList GraphQL API endpoint
 url = 'https://graphql.anilist.co'
@@ -55,8 +65,6 @@ def get_anime():
     NOTE: direct browser access results in a get request, which will return an error message as the route only accepts POST requests. 
         - use postman to check the api
     
-    
-    
     """
 
     data = request.get_json()
@@ -80,6 +88,32 @@ def get_anime():
     else:
         # Return an error message
         return jsonify({"error": "Failed to get list of anime"}), 400
+    
+
+# Endpoint to save the schedule
+@app.route('/saveSchedule', methods=['POST'])
+def save_schedule():
+    data = request.get_json()
+    print("Received data for saving:", data)
+    save_schedule_data(data, db)
+    return jsonify({"message": "Schedule saved successfully"})
+
+# Endpoint to load the schedule
+@app.route('/loadSchedule', methods=['GET'])
+def load_schedule():
+    schedule_data = load_schedule_data(db)
+    return jsonify(schedule_data)
+
+# Endpoint to remove an anime
+@app.route('/removeAnime/<int:anime_id>', methods=['DELETE'])
+def remove_anime_route(anime_id):
+    deleted_count = remove_anime(anime_id, db)
+    if deleted_count > 0:
+        return jsonify({"message": "Anime removed successfully"})
+    else:
+        return jsonify({"message": "Anime not found"}), 404
+
+
 
 if __name__ == '__main__':
     app.run(debug=True)

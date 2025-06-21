@@ -1,22 +1,11 @@
-from flask_pymongo import PyMongo
 from datetime import datetime
 
-# Initialize PyMongo
-mongo = PyMongo()
-
-def init_app(app):
-    """
-    Initialize the MongoDB connection with the Flask app.
-
-    :param app: Flask app instance
-    """
-    mongo.init_app(app)
-
-def save_schedule_data(data):
+def save_schedule_data(data, db):
     """
     Save the schedule data to MongoDB.
 
     :param data: Dictionary containing the schedule data
+    :param db: MongoDB database object
     """
     print("Received data for saving:", data)
     for day, animes in data.items():
@@ -30,7 +19,7 @@ def save_schedule_data(data):
             try:
                 # Accept both camelCase and snake_case for airing schedule
                 airing_schedule = anime.get('airingSchedule') or anime.get('airing_schedule')
-                mongo.db.animes.update_one(
+                result = db.animes.update_one(
                     {"id": anime.get('id')},
                     {
                         "$set": {
@@ -40,28 +29,21 @@ def save_schedule_data(data):
                     },
                     upsert=True
                 )
+                print(f"Saved anime {anime.get('id')} - matched: {result.matched_count}, modified: {result.modified_count}, upserted: {result.upserted_id}")
             except Exception as e:
                 print(f"Error saving anime {anime.get('id', 'unknown')}: {e}. Full anime object: {anime}")
 
-
-def load_schedule_data():
+def load_schedule_data(db):
     """
     Load the schedule data from MongoDB.
 
+    :param db: MongoDB database object
     :return: Dictionary containing the schedule data organized by day of the week
     """
-    schedule_data = {
-        "Monday": [],
-        "Tuesday": [],
-        "Wednesday": [],
-        "Thursday": [],
-        "Friday": [],
-        "Saturday": [],
-        "Sunday": []
-    }
+    schedule_data = {day: [] for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]}
 
     try: 
-        animes = mongo.db.animes.find()
+        animes = db.animes.find()
         for anime in animes:
             for edge in anime['airing_schedule']['edges']:
                 airing_time = edge['node']['airingAt']
@@ -78,15 +60,16 @@ def load_schedule_data():
     
     return schedule_data
 
-def remove_anime(anime_id):
+def remove_anime(anime_id, db):
     """
     Remove an anime from the schedule data in MongoDB.
 
     :param anime_id: ID of the anime to be removed
+    :param db: MongoDB database object
     :return: Number of documents deleted
     """
     try:
-        result = mongo.db.animes.delete_one({"id": anime_id})
+        result = db.animes.delete_one({"id": anime_id})
         return result.deleted_count
     except Exception as e:
         print(f"Error removing anime {anime_id}: {e}")
