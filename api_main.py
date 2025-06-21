@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests
+import requests, os
 from pymongo import MongoClient
 from api_db import save_schedule_data, load_schedule_data, remove_anime
 
@@ -10,9 +10,12 @@ app = Flask(__name__)
 # CORS must be after app is created
 CORS(app)  # or use "http://localhost:3000" for more security
 
+# "mongodb+srv://giganotosaurus:Graynerpass01@animeschedulercluster.7d9oxyn.mongodb.net/anime_db?retryWrites=true&w=majority&appName=AnimeSchedulerCluster"
+
 # Regular PyMongo setup
-mongo_client = MongoClient("mongodb+srv://giganotosaurus:Graynerpass01@animeschedulercluster.7d9oxyn.mongodb.net/anime_db?retryWrites=true&w=majority&appName=AnimeSchedulerCluster")
-db = mongo_client.get_default_database()
+mongo_uri = os.environ.get("MONGO_URI")
+client = MongoClient(mongo_uri)
+db = client["anime_db"]
 
 # Pass db to your api_db functions as needed, or set it as a global in api_db
 
