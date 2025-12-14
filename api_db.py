@@ -63,15 +63,20 @@ def load_schedule_data(db):
 
 def remove_anime(anime_id, db):
     """
-    Remove an anime from the schedule data in MongoDB.
+    Remove ALL entries for an anime from the schedule data in MongoDB.
+    Since an anime can have multiple entries (different episodes/airing times),
+    this function removes all documents matching the anime ID.
 
     :param anime_id: ID of the anime to be removed
     :param db: MongoDB database object
     :return: Number of documents deleted
     """
     try:
-        result = db.animes.delete_one({"id": anime_id})
-        return result.deleted_count
+        # Use delete_many to remove all entries for this anime (different episodes/airing times)
+        result = db.animes.delete_many({"id": anime_id})
+        deleted_count = result.deleted_count
+        print(f"Removed {deleted_count} entry/entries for anime ID {anime_id}")
+        return deleted_count
     except Exception as e:
         print(f"Error removing anime {anime_id}: {e}")
         return 0

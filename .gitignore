@@ -1,5 +1,8 @@
 .DS_Store
 
+# IDE files (PyCharm/IntelliJ IDEA)
+.idea/
+
 # Python cache files
 __pycache__/
 *.py[cod]

@@ -118,9 +118,21 @@ def load_schedule():
 # Endpoint to remove an anime
 @app.route('/removeAnime/<int:anime_id>', methods=['DELETE'])
 def remove_anime_route(anime_id):
+    """
+    Remove all entries for an anime from the database.
+    
+    This endpoint removes all documents associated with the given anime ID,
+    including all episodes and airing times.
+    
+    :param anime_id: The ID of the anime to remove
+    :return: JSON response with success message and count of deleted entries
+    """
     deleted_count = remove_anime(anime_id, db)
     if deleted_count > 0:
-        return jsonify({"message": "Anime removed successfully"})
+        return jsonify({
+            "message": f"Anime removed successfully",
+            "deleted_count": deleted_count
+        })
     else:
         return jsonify({"message": "Anime not found"}), 404
 
