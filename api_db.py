@@ -250,7 +250,7 @@ def cleanup_finished_anime(db, anilist_api_url='https://graphql.anilist.co'):
 def load_schedule_data(db, anilist_api_url='https://graphql.anilist.co'):
     """
     Load the schedule data from MongoDB.
-    Queries anime docs where status == "RELEASING" and nextAiringAt exists.
+    Queries anime docs where status is "RELEASING" or "NOT_YET_RELEASED" and nextAiringAt exists.
     Converts nextAiringAt to weekday using timezone "Australia/Melbourne".
     Returns { "Monday": [animeObj...], ... } where each animeObj includes:
     id, title, coverImage, episode (from nextEpisode), and a human readable datetime string.
@@ -268,9 +268,10 @@ def load_schedule_data(db, anilist_api_url='https://graphql.anilist.co'):
         # Get current timestamp to filter out past episodes
         current_timestamp = int(time.time())
         
-        # Query anime docs where status == "RELEASING" and nextAiringAt exists
+        # Query anime docs where status is "RELEASING" or "NOT_YET_RELEASED" and nextAiringAt exists
+        # Include both statuses so we show upcoming anime even if they haven't started releasing yet
         animes = db.animes.find({
-            "status": "RELEASING",
+            "status": {"$in": ["RELEASING", "NOT_YET_RELEASED"]},
             "nextAiringAt": {"$exists": True, "$gte": current_timestamp}
         })
         
