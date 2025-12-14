@@ -4,6 +4,7 @@ import requests, os
 from pymongo import MongoClient
 from api_db import save_schedule_data, load_schedule_data, remove_anime, cleanup_finished_anime, create_indexes
 from dotenv import load_dotenv
+from pymongo.server_api import ServerApi
 
 # Load environment variables from .env file
 # In production, use .env.production or set environment variables directly
