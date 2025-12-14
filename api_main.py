@@ -3,24 +3,34 @@ from flask_cors import CORS
 import requests, os
 from pymongo import MongoClient
 from api_db import save_schedule_data, load_schedule_data, remove_anime
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+# In production, use .env.production or set environment variables directly
+env_file = '.env.production' if os.getenv('FLASK_ENV') == 'production' else '.env'
+load_dotenv(env_file)
 
 # Initialize the Flask app
 app = Flask(__name__)
 
-# CORS must be after app is created
-CORS(app)  # or use "http://localhost:3000" for more security
+# CORS configuration from environment variable
+cors_origins = os.getenv('CORS_ORIGINS', '*')
+if cors_origins == '*':
+    CORS(app)  # Allow all origins
+else:
+    # Allow specific origins (comma-separated)
+    origins = [origin.strip() for origin in cors_origins.split(',')]
+    CORS(app, origins=origins)
 
-# "mongodb+srv://giganotosaurus:Graynerpass01@animeschedulercluster.7d9oxyn.mongodb.net/anime_db?retryWrites=true&w=majority&appName=AnimeSchedulerCluster"
+# MongoDB connection from environment variable
+# Defaults to local MongoDB if not set
+mongo_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/anime_db')
 
-# Regular PyMongo setup
-mongo_uri = os.environ.get("MONGO_URI")
 client = MongoClient(mongo_uri)
 db = client["anime_db"]
 
-# Pass db to your api_db functions as needed, or set it as a global in api_db
-
-# AniList GraphQL API endpoint
-url = 'https://graphql.anilist.co'
+# AniList GraphQL API endpoint from environment variable
+anilist_api_url = os.getenv('ANILIST_API_URL', 'https://graphql.anilist.co')
 
 # Define the GraphQL query
     # We are searching for an anime by its title
@@ -53,23 +63,18 @@ query ($search: String) {
 }
 '''
 
-# Flask route to handle the POST request
+
+"""
+This function handles the POST request to the '/api' route.
+It gets the anime title from the request JSON data and uses it to make a query to the AniList GraphQL API.
+The response from the API is returned as a JSON response.
+If the request fails, an error message is returned.
+
+NOTE: direct browser access results in a get request, which will return an error message as the route only accepts POST requests. 
+    - use postman to check the api
+"""
 @app.route('/api', methods=['POST'])
 def get_anime():
-    """
-    This function handles the POST request to the '/api' route.
-
-    It gets the anime title from the request JSON data and uses it to make a query to the AniList GraphQL API.
-
-    The response from the API is returned as a JSON response.
-
-    If the request fails, an error message is returned.
-
-    NOTE: direct browser access results in a get request, which will return an error message as the route only accepts POST requests. 
-        - use postman to check the api
-    
-    """
-
     data = request.get_json()
     print(data)
 
@@ -82,7 +87,7 @@ def get_anime():
     }
 
     # Make the HTTP API request using requests.post
-    response = requests.post(url, json={'query': query, 'variables': variables})
+    response = requests.post(anilist_api_url, json={'query': query, 'variables': variables})
 
     # Check if the response is successful
     if response.status_code == 200:
@@ -144,11 +149,48 @@ def fetch_anime_by_id():
     }
     '''
     variables = {'id': anime_id}
-    response = requests.post('https://graphql.anilist.co', json={'query': query, 'variables': variables})
+    response = requests.post(anilist_api_url, json={'query': query, 'variables': variables})
     if response.status_code == 200:
         return jsonify(response.json()['data']['Media'])
     else:
         return jsonify({'error': 'Failed to fetch from AniList'}), 500
 
+# Endpoint to retrieve multiple anime by their ids
+@app.route('/fetchAnimeByIds', methods=['POST'])
+def fetch_anime_by_ids():
+    data = request.get_json()
+    anime_ids = data.get('ids', [])
+    if not anime_ids:
+        return jsonify({'error': 'No anime ids provided'}), 400
+    query = '''
+    query ($ids: [Int]) {
+      Page(perPage: 50) {
+        media(id_in: $ids, type: ANIME) {
+          id
+          title { romaji english native }
+          coverImage { extraLarge large medium }
+          airingSchedule {
+            edges {
+              node {
+                airingAt
+                timeUntilAiring
+                episode
+              }
+            }
+          }
+        }
+      }
+    }
+    '''
+    variables = {'ids': anime_ids}
+    response = requests.post(anilist_api_url, json={'query': query, 'variables': variables})
+    if response.status_code == 200:
+        return jsonify(response.json()['data']['Page']['media'])
+    else:
+        return jsonify({'error': 'Failed to fetch from AniList'}), 500
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Get configuration from environment variables
+    flask_port = int(os.getenv('FLASK_PORT', 5000))
+    flask_debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
+    app.run(debug=flask_debug, port=flask_port)
