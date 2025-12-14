@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests, os
 from pymongo import MongoClient
-from api_db import save_schedule_data, load_schedule_data, remove_anime
+from api_db import save_schedule_data, load_schedule_data, remove_anime, cleanup_finished_anime, create_indexes
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -29,6 +29,9 @@ mongo_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/anime_db')
 client = MongoClient(mongo_uri)
 db = client["anime_db"]
 
+# Create indexes on startup
+create_indexes(db)
+
 # AniList GraphQL API endpoint from environment variable
 anilist_api_url = os.getenv('ANILIST_API_URL', 'https://graphql.anilist.co')
 
@@ -49,6 +52,12 @@ query ($search: String) {
         large
         medium
       }
+      status
+      nextAiringEpisode {
+        episode
+        airingAt
+        timeUntilAiring
+      }
       airingSchedule {
         edges {
           node {
@@ -64,17 +73,18 @@ query ($search: String) {
 '''
 
 
-"""
-This function handles the POST request to the '/api' route.
-It gets the anime title from the request JSON data and uses it to make a query to the AniList GraphQL API.
-The response from the API is returned as a JSON response.
-If the request fails, an error message is returned.
 
-NOTE: direct browser access results in a get request, which will return an error message as the route only accepts POST requests. 
-    - use postman to check the api
-"""
 @app.route('/api', methods=['POST'])
 def get_anime():
+  """
+  This function handles the POST request to the '/api' route.
+  It gets the anime title from the request JSON data and uses it to make a query to the AniList GraphQL API.
+  The response from the API is returned as a JSON response.
+  If the request fails, an error message is returned.
+
+  NOTE: direct browser access results in a get request, which will return an error message as the route only accepts POST requests. 
+      - use postman to check the api
+  """
     data = request.get_json()
     print(data)
 
@@ -103,17 +113,37 @@ def get_anime():
 def save_schedule():
     data = request.get_json()
     print("Received data for saving:", data)
-    save_schedule_data(data, db)
+    save_schedule_data(data, db, anilist_api_url)
     return jsonify({"message": "Schedule saved successfully"})
 
 # Endpoint to load the schedule
 @app.route('/loadSchedule', methods=['GET'])
 def load_schedule():
-    schedule_data = load_schedule_data(db)
+    """
+    Load the schedule from the database.
+    Automatically removes finished anime entries before loading.
+    """
+    schedule_data = load_schedule_data(db, anilist_api_url)
     # Ensure a valid schedule object is always returned
     if not schedule_data or not isinstance(schedule_data, dict):
         schedule_data = {day: [] for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']}
     return jsonify(schedule_data)
+
+# Endpoint to manually cleanup finished anime
+@app.route('/cleanupFinishedAnime', methods=['POST'])
+def cleanup_finished_anime_route():
+    """
+    Manually trigger cleanup of finished anime entries.
+    This is called automatically when loading the schedule, but can be triggered manually if needed.
+    Uses AniList API to check anime status (FINISHED, CANCELLED, etc.)
+    
+    :return: JSON response with count of deleted entries
+    """
+    deleted_count = cleanup_finished_anime(db, anilist_api_url)
+    return jsonify({
+        "message": "Cleanup completed",
+        "deleted_count": deleted_count
+    })
 
 # Endpoint to remove an anime
 @app.route('/removeAnime/<int:anime_id>', methods=['DELETE'])
@@ -148,6 +178,12 @@ def fetch_anime_by_id():
         id
         title { romaji english native }
         coverImage { extraLarge large medium }
+        status
+        nextAiringEpisode {
+          episode
+          airingAt
+          timeUntilAiring
+        }
         airingSchedule {
           edges {
             node {
@@ -181,6 +217,12 @@ def fetch_anime_by_ids():
           id
           title { romaji english native }
           coverImage { extraLarge large medium }
+          status
+          nextAiringEpisode {
+            episode
+            airingAt
+            timeUntilAiring
+          }
           airingSchedule {
             edges {
               node {
