@@ -107,7 +107,17 @@ def get_anime():
     else:
         # Return an error message
         return jsonify({"error": "Failed to get list of anime"}), 400
-    
+
+
+@app.route("/debug/env")
+def debug_env():
+    return jsonify({
+        "FLASK_ENV": os.getenv("FLASK_ENV"),
+        "MONGODB_URI_set": bool(os.getenv("MONGODB_URI")),
+        "MONGODB_URI_prefix": (os.getenv("MONGODB_URI") or "")[:25],  # safe partial
+        "ANILIST_API_URL": os.getenv("ANILIST_API_URL"),
+        "CORS_ORIGINS": os.getenv("CORS_ORIGINS"),
+    })
 
 # Endpoint to save the schedule
 @app.route('/saveSchedule', methods=['POST'])
