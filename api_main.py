@@ -127,6 +127,25 @@ def save_schedule():
     save_schedule_data(data, db, anilist_api_url)
     return jsonify({"message": "Schedule saved successfully"})
 
+# Endpoint to check if an anime exists in the database
+@app.route('/checkAnimeExists/<int:anime_id>', methods=['GET'])
+def check_anime_exists(anime_id):
+    """
+    Check if an anime exists in the database.
+    
+    :param anime_id: The ID of the anime to check
+    :return: JSON response indicating if the anime exists
+    """
+    try:
+        anime = db.animes.find_one({"id": anime_id})
+        exists = anime is not None
+        return jsonify({
+            "exists": exists,
+            "anime_id": anime_id
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 # Endpoint to load the schedule
 @app.route('/loadSchedule', methods=['GET'])
 def load_schedule():
