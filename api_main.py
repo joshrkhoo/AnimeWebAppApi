@@ -36,7 +36,7 @@ create_indexes(db)
 anilist_api_url = os.getenv('ANILIST_API_URL', 'https://graphql.anilist.co')
 
 # Define the GraphQL query
-    # We are searching for an anime by its title
+# We are searching for an anime by its title
 query = '''
 query ($search: String) {
   Page {
@@ -76,15 +76,15 @@ query ($search: String) {
 
 @app.route('/api', methods=['POST'])
 def get_anime():
-  """
-  This function handles the POST request to the '/api' route.
-  It gets the anime title from the request JSON data and uses it to make a query to the AniList GraphQL API.
-  The response from the API is returned as a JSON response.
-  If the request fails, an error message is returned.
+    """
+    This function handles the POST request to the '/api' route.
+    It gets the anime title from the request JSON data and uses it to make a query to the AniList GraphQL API.
+    The response from the API is returned as a JSON response.
+    If the request fails, an error message is returned.
 
-  NOTE: direct browser access results in a get request, which will return an error message as the route only accepts POST requests. 
-      - use postman to check the api
-  """
+    NOTE: direct browser access results in a get request, which will return an error message as the route only accepts POST requests. 
+        - use postman to check the api
+    """
     data = request.get_json()
     print(data)
 
