@@ -1,280 +1,167 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import requests, os
-from pymongo import MongoClient
-from api_db import save_schedule_data, load_schedule_data, remove_anime, cleanup_finished_anime, create_indexes
+import os
+
 from dotenv import load_dotenv
-from pymongo.server_api import ServerApi
+from flask import Flask, g, jsonify, request
+from flask_cors import CORS
+from pymongo import MongoClient
 
-# Load environment variables from .env file
-# In production, use .env.production or set environment variables directly
-env_file = '.env.production' if os.getenv('FLASK_ENV') == 'production' else '.env'
-load_dotenv(env_file)
+import anilist
+import api_db
+import auth
 
-# Initialize the Flask app
+# Local development reads .env; in production the variables come from Railway
+load_dotenv()
+
 app = Flask(__name__)
 
-# CORS configuration from environment variable
-cors_origins = os.getenv('CORS_ORIGINS', '*')
-if cors_origins == '*':
-    CORS(app)  # Allow all origins
+# CORS_ORIGINS is a comma-separated list of allowed frontend origins
+cors_origins = os.getenv("CORS_ORIGINS", "*")
+if cors_origins == "*":
+    CORS(app)
 else:
-    # Allow specific origins (comma-separated)
-    origins = [origin.strip() for origin in cors_origins.split(',')]
-    CORS(app, origins=origins)
+    CORS(app, origins=[o.strip() for o in cors_origins.split(",")])
 
-# MongoDB connection from environment variable
-# Defaults to local MongoDB if not set
-mongo_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/anime_db')
+client = MongoClient(os.getenv("MONGODB_URI", "mongodb://localhost:27017/anime_db"))
+db = client[os.getenv("MONGODB_DB", "anime_db")]
 
-client = MongoClient(mongo_uri)
-db = client["anime_db"]
+try:
+    auth.create_indexes(db)
+    api_db.create_indexes(db)
+except Exception as e:
+    print(f"Error creating indexes: {e}")
 
-# Create indexes on startup
-create_indexes(db)
-
-# AniList GraphQL API endpoint from environment variable
-anilist_api_url = os.getenv('ANILIST_API_URL', 'https://graphql.anilist.co')
-
-# Define the GraphQL query
-# We are searching for an anime by its title
-query = '''
-query ($search: String) {
-  Page {
-    media(search: $search, type: ANIME) {
-      id
-      title {
-        romaji
-        english
-        native
-      }
-      coverImage {
-        extraLarge
-        large
-        medium
-      }
-      status
-      nextAiringEpisode {
-        episode
-        airingAt
-        timeUntilAiring
-      }
-      airingSchedule {
-        edges {
-          node {
-            airingAt
-            timeUntilAiring
-            episode
-          }
-        }
-      }
-    }
-  }
-}
-'''
+login_required = auth.require_auth(db)
 
 
+@app.errorhandler(anilist.AniListError)
+def handle_anilist_error(e):
+    print(f"AniList error: {e}")
+    return jsonify({"error": "Couldn't reach AniList. Try again in a moment."}), 502
 
-@app.route('/api', methods=['POST'])
-def get_anime():
+
+@app.get("/health")
+def health():
+    return jsonify({"ok": True})
+
+
+# --- Auth ---
+
+@app.post("/auth/register")
+def register():
+    username, password, error = auth.validate_credentials(request.get_json(silent=True) or {})
+    if error:
+        return jsonify({"error": error}), 400
+    user = auth.register(db, username, password)
+    if user is None:
+        return jsonify({"error": "That username is taken."}), 409
+    return jsonify({"token": auth.create_session(db, user), "user": auth.public_user(user)}), 201
+
+
+@app.post("/auth/login")
+def login():
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username", "")).strip().lower()
+    user = auth.authenticate(db, username, str(data.get("password", "")))
+    if user is None:
+        return jsonify({"error": "Wrong username or password."}), 401
+    return jsonify({"token": auth.create_session(db, user), "user": auth.public_user(user)})
+
+
+@app.post("/auth/logout")
+def logout():
+    auth.delete_session(db)
+    return jsonify({"ok": True})
+
+
+@app.get("/auth/me")
+@login_required
+def me():
+    return jsonify({"user": auth.public_user(g.user)})
+
+
+# --- Browsing ---
+
+@app.get("/search")
+@login_required
+def search():
+    text = request.args.get("q", "").strip()
+    if not text:
+        return jsonify([])
+    return jsonify(anilist.search_airing(text[:100]))
+
+
+@app.get("/browse/<kind>")
+@login_required
+def browse(kind):
+    statuses = {"airing": "RELEASING", "upcoming": "NOT_YET_RELEASED"}
+    if kind not in statuses:
+        return jsonify({"error": "Unknown list."}), 404
+    return jsonify(anilist.popular(statuses[kind]))
+
+
+# --- Library (schedule + wishlist) ---
+
+@app.get("/library")
+@login_required
+def get_library():
+    """The user's schedule and wishlist with live airing info.
+
+    Finished shows are dropped. Wishlist shows that have started airing (or premiere
+    within a week) move to the schedule and are reported in `promoted`.
     """
-    This function handles the POST request to the '/api' route.
-    It gets the anime title from the request JSON data and uses it to make a query to the AniList GraphQL API.
-    The response from the API is returned as a JSON response.
-    If the request fails, an error message is returned.
+    user_id = g.user["_id"]
+    entries = api_db.library_entries(db, user_id)
+    media = anilist.media_by_ids(list(entries))
 
-    NOTE: direct browser access results in a get request, which will return an error message as the route only accepts POST requests. 
-        - use postman to check the api
-    """
-    data = request.get_json()
-    print(data)
+    finished = {i for i, m in media.items() if m["status"] in anilist.FINISHED_STATUSES}
+    if finished:
+        api_db.remove_entries(db, user_id, finished)
 
-    anime_name = data.get('title')
+    promoted = [
+        i for i, list_name in entries.items()
+        if list_name == api_db.WISHLIST and i in media and i not in finished
+        and not anilist.is_upcoming(media[i])
+    ]
+    if promoted:
+        api_db.move_entries(db, user_id, promoted, api_db.SCHEDULE)
+        for i in promoted:
+            entries[i] = api_db.SCHEDULE
 
-
-    # Define our query variables and values that will be used in the query request
-    variables = {
-        'search': anime_name
-    }
-
-    # Make the HTTP API request using requests.post
-    response = requests.post(anilist_api_url, json={'query': query, 'variables': variables})
-
-    # Check if the response is successful
-    if response.status_code == 200:
-        # Return the response as JSON
-        return jsonify(response.json())
-    else:
-        # Return an error message
-        return jsonify({"error": "Failed to get list of anime"}), 400
+    library = {api_db.SCHEDULE: [], api_db.WISHLIST: []}
+    for i, list_name in entries.items():
+        if i in media and i not in finished:
+            library[list_name].append(media[i])
+    library["promoted"] = [media[i] for i in promoted]
+    return jsonify(library)
 
 
-@app.route("/debug/env")
-def debug_env():
-    return jsonify({
-        "FLASK_ENV": os.getenv("FLASK_ENV"),
-        "MONGODB_URI_set": bool(os.getenv("MONGODB_URI")),
-        "MONGODB_URI_prefix": (os.getenv("MONGODB_URI") or "")[:25],  # safe partial
-        "ANILIST_API_URL": os.getenv("ANILIST_API_URL"),
-        "CORS_ORIGINS": os.getenv("CORS_ORIGINS"),
-    })
-
-# Endpoint to save the schedule
-@app.route('/saveSchedule', methods=['POST'])
-def save_schedule():
-    data = request.get_json()
-    print("Received data for saving:", data)
-    save_schedule_data(data, db, anilist_api_url)
-    return jsonify({"message": "Schedule saved successfully"})
-
-# Endpoint to check if an anime exists in the database
-@app.route('/checkAnimeExists/<int:anime_id>', methods=['GET'])
-def check_anime_exists(anime_id):
-    """
-    Check if an anime exists in the database.
-    
-    :param anime_id: The ID of the anime to check
-    :return: JSON response indicating if the anime exists
-    """
+@app.post("/library")
+@login_required
+def add_to_library():
+    """Upcoming shows go on the wishlist; everything else goes on the schedule."""
     try:
-        anime = db.animes.find_one({"id": anime_id})
-        exists = anime is not None
-        return jsonify({
-            "exists": exists,
-            "anime_id": anime_id
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        anime_id = int((request.get_json(silent=True) or {}).get("id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Missing anime id."}), 400
 
-# Endpoint to load the schedule
-@app.route('/loadSchedule', methods=['GET'])
-def load_schedule():
-    """
-    Load the schedule from the database.
-    Automatically removes finished anime entries before loading.
-    """
-    schedule_data = load_schedule_data(db, anilist_api_url)
-    # Ensure a valid schedule object is always returned
-    if not schedule_data or not isinstance(schedule_data, dict):
-        schedule_data = {day: [] for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']}
-    return jsonify(schedule_data)
+    show = anilist.media_by_ids([anime_id]).get(anime_id)
+    if show is None:
+        return jsonify({"error": "Couldn't find that anime."}), 404
+    if show["status"] in anilist.FINISHED_STATUSES:
+        return jsonify({"error": "That show has finished airing."}), 400
 
-# Endpoint to manually cleanup finished anime
-@app.route('/cleanupFinishedAnime', methods=['POST'])
-def cleanup_finished_anime_route():
-    """
-    Manually trigger cleanup of finished anime entries.
-    This is called automatically when loading the schedule, but can be triggered manually if needed.
-    Uses AniList API to check anime status (FINISHED, CANCELLED, etc.)
-    
-    :return: JSON response with count of deleted entries
-    """
-    deleted_count = cleanup_finished_anime(db, anilist_api_url)
-    return jsonify({
-        "message": "Cleanup completed",
-        "deleted_count": deleted_count
-    })
+    list_name = api_db.WISHLIST if anilist.is_upcoming(show) else api_db.SCHEDULE
+    api_db.save_entry(db, g.user["_id"], anime_id, list_name)
+    return jsonify({"show": show, "list": list_name}), 201
 
-# Endpoint to remove an anime
-@app.route('/removeAnime/<int:anime_id>', methods=['DELETE'])
-def remove_anime_route(anime_id):
-    """
-    Remove all entries for an anime from the database.
-    
-    This endpoint removes all documents associated with the given anime ID,
-    including all episodes and airing times.
-    
-    :param anime_id: The ID of the anime to remove
-    :return: JSON response with success message and count of deleted entries
-    """
-    deleted_count = remove_anime(anime_id, db)
-    if deleted_count > 0:
-        return jsonify({
-            "message": f"Anime removed successfully",
-            "deleted_count": deleted_count
-        })
-    else:
-        return jsonify({"message": "Anime not found"}), 404
 
-@app.route('/fetchAnimeById', methods=['POST'])
-def fetch_anime_by_id():
-    data = request.get_json()
-    anime_id = data.get('id')
-    if not anime_id:
-        return jsonify({'error': 'No anime id provided'}), 400
-    query = '''
-    query ($id: Int) {
-      Media(id: $id, type: ANIME) {
-        id
-        title { romaji english native }
-        coverImage { extraLarge large medium }
-        status
-        nextAiringEpisode {
-          episode
-          airingAt
-          timeUntilAiring
-        }
-        airingSchedule {
-          edges {
-            node {
-              airingAt
-              timeUntilAiring
-              episode
-            }
-          }
-        }
-      }
-    }
-    '''
-    variables = {'id': anime_id}
-    response = requests.post(anilist_api_url, json={'query': query, 'variables': variables})
-    if response.status_code == 200:
-        return jsonify(response.json()['data']['Media'])
-    else:
-        return jsonify({'error': 'Failed to fetch from AniList'}), 500
+@app.delete("/library/<int:anime_id>")
+@login_required
+def remove_from_library(anime_id):
+    api_db.remove_entries(db, g.user["_id"], [anime_id])
+    return jsonify({"ok": True})
 
-# Endpoint to retrieve multiple anime by their ids
-@app.route('/fetchAnimeByIds', methods=['POST'])
-def fetch_anime_by_ids():
-    data = request.get_json()
-    anime_ids = data.get('ids', [])
-    if not anime_ids:
-        return jsonify({'error': 'No anime ids provided'}), 400
-    query = '''
-    query ($ids: [Int]) {
-      Page(perPage: 50) {
-        media(id_in: $ids, type: ANIME) {
-          id
-          title { romaji english native }
-          coverImage { extraLarge large medium }
-          status
-          nextAiringEpisode {
-            episode
-            airingAt
-            timeUntilAiring
-          }
-          airingSchedule {
-            edges {
-              node {
-                airingAt
-                timeUntilAiring
-                episode
-              }
-            }
-          }
-        }
-      }
-    }
-    '''
-    variables = {'ids': anime_ids}
-    response = requests.post(anilist_api_url, json={'query': query, 'variables': variables})
-    if response.status_code == 200:
-        return jsonify(response.json()['data']['Page']['media'])
-    else:
-        return jsonify({'error': 'Failed to fetch from AniList'}), 500
 
-if __name__ == '__main__':
-    # Get configuration from environment variables
-    flask_port = int(os.getenv('FLASK_PORT', 5000))
-    flask_debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
-    app.run(debug=flask_debug, port=flask_port)
+if __name__ == "__main__":
+    app.run(debug=os.getenv("FLASK_DEBUG", "False").lower() == "true",
+            port=int(os.getenv("FLASK_PORT", 5000)))
