@@ -1,5 +1,7 @@
 """Thin AniList GraphQL client with a small in-memory cache."""
+import html
 import os
+import re
 import time
 
 import requests
@@ -135,3 +137,74 @@ def media_by_ids(ids):
             result[m["id"]] = m
 
     return result
+
+
+DETAILS_CACHE_TTL = 30 * 60
+_details_cache = {}  # id -> (fetched_at, details)
+
+_SPOILER_RE = re.compile(r"~!.*?!~", re.S)
+_BR_RE = re.compile(r"<br\s*/?>", re.I)
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _clean_description(text):
+    """AniList descriptions contain HTML tags and ~!spoiler!~ blocks; return plain text."""
+    if not text:
+        return ""
+    text = _SPOILER_RE.sub("", text)
+    text = _BR_RE.sub("\n", text)
+    text = html.unescape(_TAG_RE.sub("", text))
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n|\n", text)]
+    return "\n\n".join(p for p in paragraphs if p)
+
+
+def details(anime_id):
+    """Everything the details panel shows. Returns None if the show doesn't exist."""
+    now = time.time()
+    cached = _details_cache.get(anime_id)
+    if cached and now - cached[0] < DETAILS_CACHE_TTL:
+        return cached[1]
+
+    data = _query(
+        f"""
+        query ($id: Int) {{
+          Media(id: $id, type: ANIME) {{
+            {MEDIA_FIELDS}
+            title {{ native }}
+            description(asHtml: false)
+            season
+            seasonYear
+            duration
+            source
+            popularity
+            endDate {{ year month day }}
+            studios(isMain: true) {{ nodes {{ name }} }}
+            externalLinks {{ site url type language color icon notes isDisabled }}
+            trailer {{ id site }}
+          }}
+        }}
+        """,
+        {"id": anime_id},
+    )
+    media = data["Media"]
+    if media is None:
+        return None
+
+    trailer = media.pop("trailer") or {}
+    trailer_urls = {
+        "youtube": "https://www.youtube.com/watch?v={}",
+        "dailymotion": "https://www.dailymotion.com/video/{}",
+    }
+    url_format = trailer_urls.get(trailer.get("site"))
+    media["trailerUrl"] = url_format.format(trailer["id"]) if url_format and trailer.get("id") else None
+
+    media["description"] = _clean_description(media["description"])
+    media["studios"] = [s["name"] for s in media["studios"]["nodes"]]
+    streaming = {}
+    for link in media.pop("externalLinks") or []:
+        if link["type"] == "STREAMING" and not link["isDisabled"]:
+            streaming.setdefault(link["url"], {k: link[k] for k in ("site", "url", "language", "color", "icon", "notes")})
+    media["streaming"] = list(streaming.values())
+
+    _details_cache[anime_id] = (now, media)
+    return media

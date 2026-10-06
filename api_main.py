@@ -99,6 +99,15 @@ def browse(kind):
     return jsonify(anilist.popular(statuses[kind]))
 
 
+@app.get("/anime/<int:anime_id>")
+@login_required
+def anime_details(anime_id):
+    show = anilist.details(anime_id)
+    if show is None:
+        return jsonify({"error": "Couldn't find that anime."}), 404
+    return jsonify(show)
+
+
 # --- Library (schedule + wishlist) ---
 
 @app.get("/library")
