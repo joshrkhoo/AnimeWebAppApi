@@ -4,16 +4,23 @@ Backend for [AnimeWebApp](https://github.com/joshrkhoo/AnimeWebApp): user accoun
 
 **Live API:** https://anime-web-app-api-production.up.railway.app · **App:** https://anime.joshrkhoo.com
 
-<p>
-  <img src="docs/schedule.jpg" alt="The app's weekly schedule" width="49%" />
-  <img src="docs/details.jpg" alt="The app's show details panel" width="49%" />
-</p>
+![Demo of the app this API powers: schedule, search and add, show details with streaming links, browse, wishlist, and phone layout](docs/demo.gif)
 
-*The frontend this API powers. More screenshots and a demo GIF are in the [frontend README](https://github.com/joshrkhoo/AnimeWebApp#readme).*
+*The [frontend](https://github.com/joshrkhoo/AnimeWebApp) running on this API.*
 
 ## Tech stack
 
-Python 3.11+, Flask, gunicorn, MongoDB (Atlas) via PyMongo.
+| Layer           | What it uses                                                                                                                                   |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Language        | Python 3.11                                                                                                                                    |
+| Web framework   | [Flask](https://flask.palletsprojects.com) 3.1 (on Werkzeug 3.1), with [Flask-CORS](https://flask-cors.readthedocs.io) 6.0 restricting origins |
+| App server      | [gunicorn](https://gunicorn.org) 23 with 2 sync workers (see `Procfile`)                                                                         |
+| Database        | [MongoDB Atlas](https://www.mongodb.com/atlas) through [PyMongo](https://pymongo.readthedocs.io) 4.11                                            |
+| Auth            | Werkzeug's scrypt password hashing; session tokens from Python's `secrets`, stored as SHA-256 hashes; a MongoDB TTL index expires old sessions |
+| Show data       | [AniList GraphQL API](https://docs.anilist.co), called with [requests](https://requests.readthedocs.io) 2.32                                      |
+| Caching         | In-process dictionaries with expiry times (no Redis)                                                                                           |
+| Config          | Environment variables; [python-dotenv](https://pypi.org/project/python-dotenv/) loads `.env` in local development                                |
+| Hosting         | [Railway](https://railway.com), built from `requirements.txt` and started from the `Procfile`                                                   |
 
 ## How it works
 
